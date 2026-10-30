@@ -9,6 +9,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, Teleg
 from aiogram.types import LinkPreviewOptions
 from sqlalchemy import select, text, update
 
+from love_bot.diagnostics import StartupFailure, startup_call
 from love_bot.models import BotUser, ModerationAudit, PublicationJob, PublicationState, Submission
 from love_bot.service import SubmissionError
 
@@ -171,14 +172,31 @@ class PublicationWorker:
     async def validate_channel(self):
         if not self.settings.publication_enabled:
             return
-        chat = await self.bot.get_chat(self.settings.channel_id)
-        member = await self.bot.get_chat_member(self.settings.channel_id, self.bot.id)
+        chat = await startup_call(
+            "get_publication_channel", self.bot.get_chat(self.settings.channel_id)
+        )
+        member = await startup_call(
+            "check_publication_permissions",
+            self.bot.get_chat_member(self.settings.channel_id, self.bot.id),
+        )
         if chat.type != ChatType.CHANNEL:
-            logger.error("publication_target_must_be_channel")
-            raise RuntimeError("Publication target must be a channel")
+            logger.error(
+                "publication_target_must_be_channel",
+                extra={
+                    "stage": "get_publication_channel",
+                    "hint": "CHANNEL_ID указывает на другой тип чата. Укажи ID канала, а не группы.",
+                },
+            )
+            raise StartupFailure("Publication target must be a channel")
         if not getattr(member, "can_post_messages", False):
-            logger.error("publication_admin_post_permission_required")
-            raise RuntimeError("Bot must be a channel administrator with can_post_messages")
+            logger.error(
+                "publication_admin_post_permission_required",
+                extra={
+                    "stage": "check_publication_permissions",
+                    "hint": "Назначь бота администратором канала с правом публикации сообщений.",
+                },
+            )
+            raise StartupFailure("Bot must be a channel administrator with can_post_messages")
 
     async def claim(self):
         if not self.settings.publication_enabled:

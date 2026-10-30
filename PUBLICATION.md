@@ -18,6 +18,17 @@
 
 Если оставить `PUBLICATION_ENABLED=false`, бот продолжит работать как предложка. Наличие одного `CHANNEL_ID` не включает отправку.
 
+### Если бот не запускается
+
+Лог `telegram_startup_failed` содержит `stage`, `telegram_method`, безопасный код `telegram_error` и подсказку `hint`. Полные ответы Telegram и секретные параметры запросов не выводятся.
+
+- `chat_not_found` на `get_publication_channel`: проверьте полный отрицательный `CHANNEL_ID` и добавьте в канал именно бота с токеном из окружения хостинга.
+- `bot_not_in_channel` или `channel_permission_denied`: назначьте этого бота администратором с правом публикации сообщений.
+- `invalid_bot_token` на `authenticate_bot`: проверьте актуальный `BOT_TOKEN` в BotFather и настройках хостинга.
+- `telegram_startup_optional_failed` на `register_commands` — предупреждение о меню команд. Оно не останавливает бота: команды можно отправлять вручную.
+
+После исправления ID или прав перезапустите приложение. Если видна только старая строка `startup_or_runtime_failed` без этапа и подсказки, обновите развёртывание до текущего кода из GitHub.
+
 ## Как работает
 
 `предпросмотр → подтверждение автора → pending → модератор одобряет → approved + очередь → Telegram → published`.

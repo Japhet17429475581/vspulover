@@ -10,12 +10,36 @@ from sqlalchemy import text
 from love_bot.bot import make_bot, make_dispatcher
 from love_bot.config import Settings
 from love_bot.db import make_engine, make_sessions
+from love_bot.diagnostics import StartupFailure, startup_call
 from love_bot.logging_setup import configure_logging
 from love_bot.notifications import NotificationWorker
 from love_bot.publication import PublicationWorker
 from love_bot.service import SubmissionService
 
 logger = logging.getLogger("love_bot.runtime")
+
+
+async def prepare_telegram(bot, publisher):
+    await startup_call("authenticate_bot", bot.me())
+    await publisher.validate_channel()
+    # A failure to configure the optional menu must not disable working commands.
+    await startup_call(
+        "register_commands",
+        bot.set_my_commands(
+            [
+                BotCommand(command="start", description="предложить что-то тёплое ♡"),
+                BotCommand(command="cancel", description="отменить действие"),
+                BotCommand(command="privacy", description="данные и сроки хранения"),
+                BotCommand(command="delete_my_data", description="удалить мои данные"),
+                BotCommand(command="admin", description="для модераторов"),
+                BotCommand(
+                    command="published", description="сверить публикацию после сбоя (модератор)"
+                ),
+            ]
+        ),
+        required=False,
+    )
+    await startup_call("delete_webhook", bot.delete_webhook(drop_pending_updates=False))
 
 
 async def housekeeping(service, dp, stop):
@@ -58,20 +82,7 @@ async def run(settings: Settings):
                 bot = make_bot(settings)
                 publisher = PublicationWorker(service, bot)
                 await publisher.publication.recover_interrupted()
-                await publisher.validate_channel()
-                await bot.set_my_commands(
-                    [
-                        BotCommand(command="start", description="предложить что-то тёплое ♡"),
-                        BotCommand(command="cancel", description="отменить действие"),
-                        BotCommand(command="privacy", description="данные и сроки хранения"),
-                        BotCommand(command="delete_my_data", description="удалить мои данные"),
-                        BotCommand(command="admin", description="для модераторов"),
-                        BotCommand(
-                            command="published",
-                            description="сверить публикацию после сбоя (модератор)",
-                        ),
-                    ]
-                )
+                await prepare_telegram(bot, publisher)
                 tasks = [
                     asyncio.create_task(NotificationWorker(service, bot).run(stop)),
                     asyncio.create_task(housekeeping(service, dp, stop)),
@@ -79,7 +90,6 @@ async def run(settings: Settings):
                 if settings.publication_enabled:
                     tasks.append(asyncio.create_task(publisher.run(stop)))
                 logger.info("bot_started")
-                await bot.delete_webhook(drop_pending_updates=False)
                 await dp.start_polling(
                     bot,
                     allowed_updates=dp.resolve_used_update_types(),
@@ -111,6 +121,8 @@ def main():
         sys.exit(1)
     except KeyboardInterrupt:
         pass
+    except StartupFailure:
+        sys.exit(1)
     except Exception as exc:
         logger.critical("startup_or_runtime_failed", extra={"error_type": type(exc).__name__})
         sys.exit(1)

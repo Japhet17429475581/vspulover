@@ -15,6 +15,12 @@ class JsonFormatter(logging.Formatter):
         error_type = getattr(record, "error_type", None)
         if error_type:
             data["error_type"] = error_type
+        # These fields are fixed diagnostic codes/hints produced by our own code.
+        if record.name.startswith("love_bot"):
+            for key in ("stage", "telegram_method", "telegram_error", "hint"):
+                value = getattr(record, key, None)
+                if isinstance(value, str):
+                    data[key] = value
         if record.exc_info:
             data["error_type"] = record.exc_info[0].__name__
         return json.dumps(data, ensure_ascii=False)
