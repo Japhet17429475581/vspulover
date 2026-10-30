@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.venv/
+.uv-cache/
+.docker-test/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.coverage
+htmlcov/
+.local-postgres/
