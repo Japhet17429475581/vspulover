@@ -12,6 +12,7 @@ from love_bot.config import Settings
 from love_bot.db import make_engine, make_sessions
 from love_bot.logging_setup import configure_logging
 from love_bot.notifications import NotificationWorker
+from love_bot.publication import PublicationWorker
 from love_bot.service import SubmissionService
 
 logger = logging.getLogger("love_bot.runtime")
@@ -45,7 +46,7 @@ async def run(settings: Settings):
             version = await connection.scalar(
                 text("SELECT version_num FROM love_bot.alembic_version")
             )
-            if version != "0001":
+            if version != "0002":
                 raise RuntimeError("Run alembic upgrade head before starting the bot")
             locked = await connection.scalar(text("SELECT pg_try_advisory_lock(762950131)"))
             await connection.commit()
@@ -55,6 +56,9 @@ async def run(settings: Settings):
                 service = SubmissionService(make_sessions(engine), settings)
                 dp = make_dispatcher(service)
                 bot = make_bot(settings)
+                publisher = PublicationWorker(service, bot)
+                await publisher.publication.recover_interrupted()
+                await publisher.validate_channel()
                 await bot.set_my_commands(
                     [
                         BotCommand(command="start", description="предложить что-то тёплое ♡"),
@@ -62,12 +66,18 @@ async def run(settings: Settings):
                         BotCommand(command="privacy", description="данные и сроки хранения"),
                         BotCommand(command="delete_my_data", description="удалить мои данные"),
                         BotCommand(command="admin", description="для модераторов"),
+                        BotCommand(
+                            command="published",
+                            description="сверить публикацию после сбоя (модератор)",
+                        ),
                     ]
                 )
                 tasks = [
                     asyncio.create_task(NotificationWorker(service, bot).run(stop)),
                     asyncio.create_task(housekeeping(service, dp, stop)),
                 ]
+                if settings.publication_enabled:
+                    tasks.append(asyncio.create_task(publisher.run(stop)))
                 logger.info("bot_started")
                 await bot.delete_webhook(drop_pending_updates=False)
                 await dp.start_polling(

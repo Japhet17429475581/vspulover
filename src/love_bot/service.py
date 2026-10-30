@@ -7,7 +7,7 @@ from sqlalchemy import and_, delete, distinct, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from love_bot.config import Settings
-from love_bot.models import BotUser, ModerationAudit, Notification, Submission
+from love_bot.models import BotUser, ModerationAudit, Notification, PublicationJob, Submission
 from love_bot.moderation import (
     ModerationClassifier,
     ModerationResult,
@@ -88,6 +88,21 @@ class SubmissionService:
         async with self.sessions.begin() as session:
             await self._lock_user(session, user_id)
 
+    def enqueue_publication(self, session, submission_id: int, moderator_id: int | None):
+        if not self.settings.publication_enabled:
+            return
+        session.add(
+            PublicationJob(submission_id=submission_id, channel_id=self.settings.channel_id)
+        )
+        session.add(
+            ModerationAudit(
+                submission_id=submission_id,
+                action="publication_queued",
+                moderator_id=moderator_id,
+                details={"channel_id": self.settings.channel_id},
+            )
+        )
+
     async def submit(
         self, user_id: int, original: str, confirmed_text: str, request_key: UUID
     ) -> tuple[Submission, bool]:
@@ -160,6 +175,8 @@ class SubmissionService:
                 session.add(
                     Notification(submission_id=submission.id, target_id=user_id, kind="approved")
                 )
+            if approved:
+                self.enqueue_publication(session, submission.id, None)
             if not approved:
                 for admin_id in self.settings.admin_ids:
                     session.add(
@@ -242,6 +259,8 @@ class SubmissionService:
             )
             if user.notifications_enabled:
                 session.add(Notification(submission_id=submission_id, target_id=owner, kind=action))
+            if action == "approved":
+                self.enqueue_publication(session, submission_id, admin_id)
             return True
 
     async def statistics(self, admin_id: int) -> dict:
@@ -259,6 +278,9 @@ class SubmissionService:
                             func.count().filter(Submission.status == "pending").label("pending"),
                             func.count().filter(Submission.status == "approved").label("approved"),
                             func.count().filter(Submission.status == "rejected").label("rejected"),
+                            func.count()
+                            .filter(Submission.status == "published")
+                            .label("published"),
                             func.count()
                             .filter(
                                 Submission.moderation_decision.in_(["auto_approved", "rejected"])

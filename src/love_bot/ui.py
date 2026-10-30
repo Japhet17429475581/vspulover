@@ -22,14 +22,15 @@ APPROVED = "твоё предложение одобрено ♡"
 REJECTED = "к сожалению, это предложение не прошло проверку. можешь попробовать отправить другое ♡"
 ABOUT = (
     "напиши, проверь текст и отправь — дальше его посмотрят модераторы ♡\n\n"
-    "одобрение не обещает публикацию или сроки. сейчас бот только собирает предложения.\n\n"
+    "после одобрения предложение может попасть в очередь публикации. точных сроков мы не обещаем.\n\n"
     "авторство в канале не раскрывается. для работы бота в базе хранится твой Telegram ID, "
     "связанный с предложениями. имя, username и телефон профиля мы не собираем. "
     "доступ к базе есть у её владельца. не отправляй чужие контакты и чувствительные сведения.\n\n"
     "предложения хранятся до 180 дней (срок может быть изменён владельцем), "
     "исходный текст — до 7 дней. /privacy — точные сроки этого бота. "
     "/delete_my_data — удалить все свои предложения, включая одобренные. "
-    "сообщения в истории Telegram эта команда не удаляет."
+    "сообщения в истории Telegram и уже опубликованные посты эта команда не удаляет; "
+    "для удаления поста обратись к администратору канала."
 )
 STATUS = {
     "pending": "на проверке",
@@ -71,15 +72,20 @@ def admin_home():
     return keyboard(
         (("📥 очередь", "a:q:pending:0"), ("✅ одобренные", "a:q:approved:0")),
         (("📊 статистика", "a:stats"), ("⚙️ настройки", "a:settings")),
+        (("📤 публикации", "a:publications:0"),),
     )
 
 
-def review_buttons(submission):
+def review_buttons(submission, job=None, publication_enabled=False):
     rows = []
     if submission.status == "pending":
         rows.append(
             (("✅ одобрить", f"a:ok:{submission.id}"), ("❌ отклонить", f"a:no:{submission.id}"))
         )
+    if submission.status == "approved" and publication_enabled and job is None:
+        rows.append((("📤 опубликовать", f"a:publish:{submission.id}"),))
+    if job and job.status in {"failed", "uncertain"}:
+        rows.append((("повторить публикацию", f"a:pub_retry:{submission.id}:{job.attempts}"),))
     queue_status = "approved" if submission.status == "approved" else "pending"
     rows.append((("⏭ следующее", f"a:q:{queue_status}:{submission.id}"),))
     rows.append((("📥 очередь", "a:q:pending:0"), ("панель", "a:home")))
@@ -96,7 +102,7 @@ def reject_buttons(submission_id: int):
     )
 
 
-def moderation_card(submission, timezone: str) -> str:
+def moderation_card(submission, timezone: str, job=None) -> str:
     reasons = "; ".join(submission.moderation_reasons)
     date = submission.created_at.astimezone(ZoneInfo(timezone)).strftime("%d.%m.%Y %H:%M")
     text = (
@@ -105,6 +111,21 @@ def moderation_card(submission, timezone: str) -> str:
     )
     if submission.rejection_reason:
         text += f"\nПричина отклонения: {submission.rejection_reason}"
+    if job:
+        labels = {
+            "queued": "в очереди",
+            "sending": "отправляется",
+            "published": "опубликовано",
+            "failed": "ошибка, нужен повтор",
+            "uncertain": "результат неизвестен, проверь канал",
+        }
+        text += f"\nПубликация: {labels[job.status]}\nКанал: {job.channel_id}"
+        if job.error_code:
+            text += f"\nКод ошибки: {job.error_code}"
+        if job.status == "uncertain":
+            text += f"\nЕсли пост есть: /published {submission.id} MESSAGE_ID. Если поста нет — повтори публикацию."
+    if submission.channel_message_id:
+        text += f"\nMessage ID: {submission.channel_message_id}"
     return text
 
 

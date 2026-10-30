@@ -8,6 +8,7 @@ from aiogram.client.session.middlewares.base import BaseRequestMiddleware
 from aiogram.enums import ChatType
 from aiogram.fsm.storage.base import BaseEventIsolation, StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.methods import GetChat, GetChatMember, SendMessage
 from aiogram.types import CallbackQuery, Message
 
 
@@ -35,12 +36,24 @@ class FloodGate:
 
 
 class PrivateChatRequests(BaseRequestMiddleware):
-    """Enforce the no-channel invariant at the last outgoing API boundary."""
+    """Allow private responses and only the explicitly configured publication channel."""
+
+    def __init__(self, settings):
+        self.settings = settings
 
     async def __call__(self, make_request, bot, method):
         chat_id = getattr(method, "chat_id", None)
-        if chat_id is not None and (not isinstance(chat_id, int) or chat_id <= 0):
-            raise PermissionError("Only positive private chat IDs are allowed")
+        if chat_id is not None:
+            private = isinstance(chat_id, int) and chat_id > 0
+            channel = (
+                self.settings.publication_enabled
+                and chat_id == self.settings.channel_id
+                and isinstance(method, (SendMessage, GetChat, GetChatMember))
+            )
+            if not private and not channel:
+                raise PermissionError(
+                    "Recipient is neither a private chat nor the publication channel"
+                )
         return await make_request(bot, method)
 
 

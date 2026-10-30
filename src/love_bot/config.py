@@ -1,7 +1,7 @@
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy.engine import URL, make_url
 
@@ -37,6 +37,25 @@ class Settings(BaseSettings):
     original_text_retention_days: int = Field(default=7, ge=1)
     technical_retention_days: int = Field(default=7, ge=1)
     display_timezone: str = "Europe/Moscow"
+    channel_id: int | None = None
+    publication_enabled: bool = False
+    publication_interval_seconds: int = Field(default=60, ge=1, le=86400)
+
+    @field_validator("channel_id", mode="before")
+    @classmethod
+    def parse_channel_id(cls, value):
+        if value is None or value == "":
+            return None
+        channel_id = int(value)
+        if not -(2**63) < channel_id < 0:
+            raise ValueError("CHANNEL_ID должен быть отрицательным числовым ID канала")
+        return channel_id
+
+    @model_validator(mode="after")
+    def validate_publication(self):
+        if self.publication_enabled and self.channel_id is None:
+            raise ValueError("Для публикации задайте CHANNEL_ID")
+        return self
 
     @field_validator("admin_ids", mode="before")
     @classmethod

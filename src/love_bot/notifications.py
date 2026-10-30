@@ -50,7 +50,12 @@ class NotificationWorker:
                 notice.target_id in self.service.settings.admin_ids
                 and submission.status == "pending"
                 if is_admin
-                else user.notifications_enabled and submission.status == notice.kind
+                else user.notifications_enabled
+                and (
+                    submission.status == notice.kind
+                    or notice.kind == "approved"
+                    and submission.status == "published"
+                )
             )
             if not allowed:
                 notice.completed_at = now

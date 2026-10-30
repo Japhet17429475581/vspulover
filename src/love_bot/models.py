@@ -120,3 +120,37 @@ class Notification(Base):
     )
     attempts: Mapped[int] = mapped_column(Integer, server_default="0")
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PublicationJob(Base):
+    __tablename__ = "publication_jobs"
+    __table_args__ = (
+        CheckConstraint("channel_id < 0", name="channel"),
+        CheckConstraint(
+            "status IN ('queued','sending','published','failed','uncertain')", name="status"
+        ),
+        Index("ix_publication_jobs_due", "status", "next_attempt_at"),
+    )
+
+    submission_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.submissions.id", ondelete="CASCADE"), primary_key=True
+    )
+    channel_id: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(String(16), server_default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, server_default="0")
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(80))
+
+
+class PublicationState(Base):
+    __tablename__ = "publication_state"
+    __table_args__ = (CheckConstraint("id = 1", name="singleton"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    next_send_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

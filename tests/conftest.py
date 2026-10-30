@@ -63,10 +63,11 @@ async def service(postgres_url, settings):
         # Guarded by postgres_url's explicit _test suffix; only this bot's schema is reset.
         await connection.execute(
             text(
-                "TRUNCATE love_bot.notification_outbox, love_bot.moderation_audit, "
+                "TRUNCATE love_bot.publication_jobs, love_bot.publication_state, love_bot.notification_outbox, love_bot.moderation_audit, "
                 "love_bot.submissions, love_bot.bot_users RESTART IDENTITY CASCADE"
             )
         )
+        await connection.execute(text("INSERT INTO love_bot.publication_state (id) VALUES (1)"))
     configured = settings.model_copy(update={"database_url": settings.database_url})
     instance = SubmissionService(make_sessions(engine), configured)
     yield instance
@@ -99,7 +100,7 @@ class RecordingSession(BaseSession):
             return Message(
                 message_id=self.message_id,
                 date=datetime.now(UTC),
-                chat=Chat(id=method.chat_id, type="private"),
+                chat=Chat(id=method.chat_id, type="channel" if method.chat_id < 0 else "private"),
                 from_user=self.bot_user,
                 text=method.text,
                 reply_markup=method.reply_markup,

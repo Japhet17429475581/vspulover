@@ -10,6 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, ErrorEvent, LinkPreviewOptions, Message
 
 from love_bot import ui
+from love_bot.publication import PublicationService
 from love_bot.safety import (
     ExpiringMemoryStorage,
     PrivateAccessMiddleware,
@@ -34,7 +35,7 @@ def make_bot(settings, session=None):
         session=session,
         default=DefaultBotProperties(parse_mode=None, link_preview_is_disabled=True),
     )
-    bot.session.middleware(PrivateChatRequests())
+    bot.session.middleware(PrivateChatRequests(settings))
     return bot
 
 
@@ -56,6 +57,15 @@ def make_dispatcher(service: SubmissionService) -> Dispatcher:
     dp["private_access"] = access
     router.message.outer_middleware(access)
     router.callback_query.outer_middleware(access)
+    publication = PublicationService(service)
+
+    async def show_submission(message, submission):
+        job = await publication.get(message.chat.id, submission.id)
+        await edit(
+            message,
+            ui.moderation_card(submission, service.settings.display_timezone, job),
+            ui.review_buttons(submission, job, service.settings.publication_enabled),
+        )
 
     @router.message(CommandStart())
     async def start(message: Message, state: FSMContext):
@@ -80,7 +90,8 @@ def make_dispatcher(service: SubmissionService) -> Dispatcher:
             f"неотправленный черновик живёт в памяти до {s.draft_ttl_seconds // 60} минут.\n\n"
             "/delete_my_data удаляет все твои предложения, включая одобренные, аудит и уведомления из базы. "
             "сообщения в истории Telegram и резервные копии владельца базы удаляются отдельно. "
-            "после удаления старые карточки модерации перестают работать."
+            "после удаления старые карточки модерации перестают работать. "
+            "уже опубликованные посты остаются в канале; для их удаления обратись к его администратору."
         )
 
     @router.message(Command("delete_my_data"))
@@ -91,7 +102,8 @@ def make_dispatcher(service: SubmissionService) -> Dispatcher:
         await state.set_data({"delete_token": token})
         await message.answer(
             "удалить все твои предложения и данные из базы? одобренные тоже будут удалены. "
-            "это действие нельзя отменить. история сообщений Telegram останется.",
+            "это действие нельзя отменить. история сообщений Telegram и посты в канале останутся; "
+            "удаление поста можно запросить у администратора канала.",
             reply_markup=ui.keyboard(
                 (("удалить мои данные", f"u:erase:{token}"),), (("отмена", "u:cancel"),)
             ),
@@ -104,6 +116,28 @@ def make_dispatcher(service: SubmissionService) -> Dispatcher:
             return
         stats = await service.statistics(message.from_user.id)
         await message.answer(admin_summary(stats), reply_markup=ui.admin_home())
+
+    @router.message(Command("published"))
+    async def reconcile_published(message: Message):
+        if message.from_user.id not in service.settings.admin_ids:
+            await message.answer("эта команда доступна только модераторам")
+            return
+        parts = message.text.split()
+        if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
+            await message.answer("после проверки канала: /published НОМЕР_ПРЕДЛОЖЕНИЯ MESSAGE_ID")
+            return
+        try:
+            changed = await publication.mark_published(
+                message.from_user.id, int(parts[1]), int(parts[2])
+            )
+        except SubmissionError as exc:
+            await message.answer(str(exc))
+            return
+        await message.answer(
+            "публикация подтверждена ♡"
+            if changed
+            else "нет публикации с неизвестным результатом для сверки"
+        )
 
     @router.callback_query(F.data == "u:cancel")
     async def cancel_callback(callback: CallbackQuery, state: FSMContext):
@@ -226,9 +260,88 @@ def make_dispatcher(service: SubmissionService) -> Dispatcher:
                 f"лимит: {s.max_submissions_per_hour} в час\nдлина: до {s.max_text_length} символов\n"
                 f"повторы: окно {s.duplicate_window_hours} ч\nхранение: {s.retention_days} дней\n\n"
                 "настройки задаются переменными окружения и применяются после перезапуска.\n"
-                "публикация в канал не подключена.",
+                f"публикация: {'включена' if s.publication_enabled else 'выключена'}\n"
+                f"канал: {s.channel_id or 'не задан'}\nпауза между постами: {s.publication_interval_seconds} сек.",
                 ui.admin_home(),
             )
+            return
+        if action == "publications" and len(parts) == 3 and parts[2].isdigit():
+            row = await publication.next(admin_id, int(parts[2]))
+            await callback.answer()
+            if row is None:
+                await edit(
+                    callback.message, "в очереди публикаций больше нет записей", ui.admin_home()
+                )
+            else:
+                submission, job = row
+                markup = ui.review_buttons(submission, job, service.settings.publication_enabled)
+                markup.inline_keyboard.extend(
+                    ui.keyboard(
+                        (("следующая публикация", f"a:publications:{submission.id}"),)
+                    ).inline_keyboard
+                )
+                await edit(
+                    callback.message,
+                    ui.moderation_card(submission, service.settings.display_timezone, job),
+                    markup,
+                )
+            return
+        if action == "publish" and len(parts) == 3 and parts[2].isdigit():
+            try:
+                changed = await publication.enqueue(admin_id, int(parts[2]))
+            except SubmissionError as exc:
+                await callback.answer(str(exc), show_alert=True)
+                return
+            await callback.answer(
+                "добавлено в очередь ♡" if changed else "уже в очереди, опубликовано или удалено"
+            )
+            submission = await service.get_for_admin(admin_id, int(parts[2]))
+            if submission:
+                await show_submission(callback.message, submission)
+            return
+        if (
+            action in {"pub_retry", "pub_retry_confirm"}
+            and len(parts) == 4
+            and parts[2].isdigit()
+            and parts[3].isdigit()
+        ):
+            submission_id, attempts = int(parts[2]), int(parts[3])
+            if action == "pub_retry":
+                job = await publication.get(admin_id, submission_id)
+                if (
+                    job is None
+                    or job.status not in {"failed", "uncertain"}
+                    or job.attempts != attempts
+                ):
+                    await callback.answer("эта кнопка больше не действует", show_alert=True)
+                    return
+                await callback.answer()
+                await edit(
+                    callback.message,
+                    f"проверь канал: если предложение #{submission_id} уже появилось, повтор создаст дубль. "
+                    f"если поста нет, отправить его в канал {service.settings.channel_id}?",
+                    ui.keyboard(
+                        (
+                            (
+                                "поста нет — повторить",
+                                f"a:pub_retry_confirm:{submission_id}:{attempts}",
+                            ),
+                        ),
+                        (("назад", f"a:card:{submission_id}"),),
+                    ),
+                )
+                return
+            try:
+                changed = await publication.retry(admin_id, submission_id, attempts)
+            except SubmissionError as exc:
+                await callback.answer(str(exc), show_alert=True)
+                return
+            await callback.answer(
+                "добавлено в очередь ♡" if changed else "уже обработано или удалено"
+            )
+            submission = await service.get_for_admin(admin_id, submission_id)
+            if submission:
+                await show_submission(callback.message, submission)
             return
         if (
             action == "q"
@@ -243,11 +356,7 @@ def make_dispatcher(service: SubmissionService) -> Dispatcher:
                     callback.message, "в этой очереди больше нет предложений ♡", ui.admin_home()
                 )
             else:
-                await edit(
-                    callback.message,
-                    ui.moderation_card(submission, service.settings.display_timezone),
-                    ui.review_buttons(submission),
-                )
+                await show_submission(callback.message, submission)
             return
         if action in {"ok", "no", "reject", "card"} and len(parts) >= 3 and parts[2].isdigit():
             submission_id = int(parts[2])
@@ -282,11 +391,7 @@ def make_dispatcher(service: SubmissionService) -> Dispatcher:
                 await callback.answer()
             submission = await service.get_for_admin(admin_id, submission_id)
             if submission:
-                await edit(
-                    callback.message,
-                    ui.moderation_card(submission, service.settings.display_timezone),
-                    ui.review_buttons(submission),
-                )
+                await show_submission(callback.message, submission)
             else:
                 await edit(callback.message, "предложение удалено", ui.admin_home())
             return
@@ -330,6 +435,7 @@ def admin_summary(stats):
     return (
         f"на проверке — {stats['pending']}\nодобрено — {stats['approved']}\n"
         f"отклонено — {stats['rejected']}\nза сегодня — {stats['today']}"
+        f"\nопубликовано — {stats['published']}"
     )
 
 
