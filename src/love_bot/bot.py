@@ -256,7 +256,7 @@ def make_dispatcher(service: SubmissionService) -> Dispatcher:
             await callback.answer()
             await edit(
                 callback.message,
-                f"автоподтверждение: {'включено, только строгий whitelist' if s.auto_approve_enabled else 'выключено'}\n"
+                f"автоподтверждение: {'включено, по фильтрам запрещённых слов' if s.auto_approve_enabled else 'выключено'}\n"
                 f"лимит: {s.max_submissions_per_hour} в час\nдлина: до {s.max_text_length} символов\n"
                 f"повторы: окно {s.duplicate_window_hours} ч\nхранение: {s.retention_days} дней\n\n"
                 "настройки задаются переменными окружения и применяются после перезапуска.\n"

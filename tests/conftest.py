@@ -30,6 +30,7 @@ def settings():
         bot_token=TEST_TOKEN,
         database_url="postgresql+asyncpg://postgres:test@localhost/love_bot_test",
         admin_ids={ADMIN, OTHER_ADMIN},
+        auto_approve_enabled=False,
     )
 
 

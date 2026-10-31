@@ -21,7 +21,7 @@ def test_admin_id_formats(ids):
         admin_ids=ids,
     )
     assert settings.admin_ids == {123, 456}
-    assert settings.auto_approve_enabled is False
+    assert settings.auto_approve_enabled is True
     assert settings.auto_approve_confidence == 0.95
     assert "p@localhost" not in repr(settings)
 

@@ -118,15 +118,18 @@ async def test_full_path_publishes_only_confirmed_text_once(driver, service, cap
 
 
 @pytest.mark.postgres
-async def test_auto_whitelist_uses_same_publication_queue(driver, service):
+async def test_auto_confession_uses_same_publication_queue(driver, service):
     enable(service)
     service.settings.auto_approve_enabled = True
-    submission = await approved(service, "маму и папу")
+    await driver.callback(await driver.draft("люблю Машу из нашей группы ❤️"))
+    submission = (await service.mine(AUTHOR))[0]
     assert (await service.mine(AUTHOR))[0].status == "approved"
+    assert submission.reviewed_by is None
     worker = PublicationWorker(service, driver.bot)
     assert await worker.process_once()
     assert (await service.mine(AUTHOR))[0].status == "published"
     assert (await worker.publication.get(ADMIN, submission.id)).status == "published"
+    assert channel_calls(driver)[0].text == "Машу из нашей группы ❤️"
 
 
 @pytest.mark.postgres

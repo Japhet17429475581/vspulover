@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     bot_token: SecretStr
     database_url: SecretStr
     admin_ids: Annotated[frozenset[int], NoDecode]
-    auto_approve_enabled: bool = False
+    auto_approve_enabled: bool = True
     auto_approve_confidence: float = Field(default=0.95, ge=0, le=1)
     max_submissions_per_hour: int = Field(default=3, ge=1, le=100)
     max_text_length: int = Field(default=500, ge=1, le=500)

@@ -130,7 +130,7 @@ async def test_review_permissions_reasons_and_future_status(service):
 async def test_auto_approval_does_not_publish_and_stats_are_real(service):
     service.settings.auto_approve_enabled = True
     approved = await submit(service, "люблю маму и папу")
-    pending = await submit(service, "тебя")
+    pending = await submit(service, "чай https://example.com")
     assert approved.status == "approved" and approved.reviewed_by is None
     assert approved.reviewed_at is not None
     assert approved.moderation_confidence is None
